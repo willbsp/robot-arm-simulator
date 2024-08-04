@@ -7,6 +7,10 @@ use std::f32::consts::TAU;
 #[derive(Component)]
 struct RotationalJoint {
     p_gain: f32,
+    i_gain: f32,
+    d_gain: f32,
+    p_prior: Vec3,
+    i_prior: Vec3,
     pivot: Vec3,
     rotation_axis: Vec3,
     target_angle: f32,
@@ -36,6 +40,10 @@ fn main() {
 
 // TODO implement proportional control for rotating joints
 // TODO then process_rotations can become process_joint_movements
+
+const P_GAIN: f32 = 120.0;
+const I_GAIN: f32 = 80.0;
+const D_GAIN: f32 = 0.5;
 
 fn setup(
     mut commands: Commands,
@@ -107,7 +115,11 @@ fn setup(
                 ..default()
             },
             RotationalJoint {
-                p_gain: 30.0,
+                p_gain: P_GAIN,
+                i_gain: I_GAIN,
+                d_gain: D_GAIN,
+                p_prior: Vec3::ZERO,
+                i_prior: Vec3::ZERO,
                 pivot: Vec3::new(0.0, 0.0, 0.0),
                 rotation_axis: Vec3::Y,
                 target_angle: 0.0,
@@ -123,7 +135,11 @@ fn setup(
                         ..default()
                     },
                     RotationalJoint {
-                        p_gain: 30.0,
+                        p_gain: P_GAIN,
+                        i_gain: I_GAIN,
+                        d_gain: D_GAIN,
+                        p_prior: Vec3::ZERO,
+                        i_prior: Vec3::ZERO,
                         pivot: Vec3::new(0.0, 1.0, 0.0),
                         rotation_axis: Vec3::X,
                         target_angle: 0.0,
@@ -138,7 +154,11 @@ fn setup(
                             ..default()
                         },
                         RotationalJoint {
-                            p_gain: 30.0,
+                            p_gain: P_GAIN,
+                            i_gain: I_GAIN,
+                            d_gain: D_GAIN,
+                            p_prior: Vec3::ZERO,
+                            i_prior: Vec3::ZERO,
                             pivot: Vec3::new(0.0, 1.0, 0.0),
                             rotation_axis: Vec3::Z,
                             target_angle: 0.0,
@@ -202,14 +222,25 @@ fn process_rotations(mut cubes: Query<(&mut Transform, &RotationalJoint)>, timer
     }
 }
 
-fn pid_controller(mut query: Query<(&mut Transform, &RotationalJoint)>, timer: Res<Time>) {
-    for (mut transform, joint) in &mut query {
+fn pid_controller(mut query: Query<(&mut Transform, &mut RotationalJoint)>, timer: Res<Time>) {
+    for (mut transform, mut joint) in &mut query {
         let current_rotation = transform.rotation;
         let angle_rads = degrees_to_rads(joint.target_angle);
         let target_rotation = get_joint_rotation(joint.rotation_axis, angle_rads);
-        let error_quat = calculate_error_quaternion(current_rotation, target_rotation);
-        let final_quat = get_joint_rotation(error_quat.xyz(), joint.p_gain * timer.delta_seconds());
+
+        let p = calculate_error_quaternion(current_rotation, target_rotation).xyz();
+        let i = joint.i_prior + p * timer.delta_seconds();
+        let d = (p - joint.p_prior) / timer.delta_seconds();
+        let mut out = (p * joint.p_gain) + (i * joint.i_gain);
+        if !d.is_nan() {
+            out += (d * joint.d_gain)
+        }
+
+        println!("\np: {p} \n i: {i} \n d: {d} \n out: {out}");
+        let final_quat = get_joint_rotation(out, timer.delta_seconds());
         transform.rotate_around(joint.pivot, final_quat);
+        joint.p_prior = p;
+        joint.i_prior = i;
         /*println!("current_rotation {0}", current_rotation);
         println!("angle_rads {0}", angle_rads);
         println!("target_rotation {0}", target_rotation);
