@@ -22,6 +22,9 @@ struct FpsText;
 #[derive(Component)]
 struct DebugText;
 
+#[derive(Component)]
+struct EndEffector;
+
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, FrameTimeDiagnosticsPlugin))
@@ -38,12 +41,12 @@ fn main() {
         .run();
 }
 
-// TODO implement proportional control for rotating joints
-// TODO then process_rotations can become process_joint_movements
+const P_GAIN: f32 = 20.0;
+const I_GAIN: f32 = 8.0;
+const D_GAIN: f32 = 0.05;
 
-const P_GAIN: f32 = 120.0;
-const I_GAIN: f32 = 80.0;
-const D_GAIN: f32 = 0.5;
+const ARM_LENGTH: f32 = 1.5;
+const ARM_WIDTH: f32 = 0.3;
 
 fn setup(
     mut commands: Commands,
@@ -94,7 +97,7 @@ fn setup(
                 ..default()
             },
         ) // Set the justification of the Text
-        .with_text_justify(JustifyText::Center)
+        .with_text_justify(JustifyText::Left)
         // Set the style of the TextBundle itself.
         .with_style(Style {
             position_type: PositionType::Absolute,
@@ -109,9 +112,9 @@ fn setup(
     commands
         .spawn((
             PbrBundle {
-                mesh: meshes.add(Cuboid::new(0.3, 2.0, 0.3)),
+                mesh: meshes.add(Cuboid::new(ARM_WIDTH, ARM_LENGTH, ARM_WIDTH)),
                 material: materials.add(Color::srgb(0.8, 0.7, 0.6)),
-                transform: Transform::from_xyz(0.0, 1.0, 0.0),
+                transform: Transform::from_xyz(0.0, ARM_LENGTH / 2.0, 0.0),
                 ..default()
             },
             RotationalJoint {
@@ -129,9 +132,9 @@ fn setup(
             parent
                 .spawn((
                     PbrBundle {
-                        mesh: meshes.add(Cuboid::new(0.3, 2.0, 0.3)),
+                        mesh: meshes.add(Cuboid::new(ARM_WIDTH, ARM_LENGTH, ARM_WIDTH)),
                         material: materials.add(Color::srgb(0.8, 0.7, 0.6)),
-                        transform: Transform::from_xyz(0.3, 2.0, 0.0),
+                        transform: Transform::from_xyz(ARM_WIDTH, ARM_LENGTH, 0.0),
                         ..default()
                     },
                     RotationalJoint {
@@ -140,30 +143,42 @@ fn setup(
                         d_gain: D_GAIN,
                         p_prior: Vec3::ZERO,
                         i_prior: Vec3::ZERO,
-                        pivot: Vec3::new(0.0, 1.0, 0.0),
+                        pivot: Vec3::new(0.0, ARM_LENGTH / 2.0, 0.0),
                         rotation_axis: Vec3::X,
                         target_angle: 0.0,
                     },
                 ))
                 .with_children(|parent| {
-                    parent.spawn((
-                        PbrBundle {
-                            mesh: meshes.add(Cuboid::new(0.3, 2.0, 0.3)),
-                            material: materials.add(Color::srgb(0.8, 0.7, 0.6)),
-                            transform: Transform::from_xyz(0.0, 2.0, 0.3),
-                            ..default()
-                        },
-                        RotationalJoint {
-                            p_gain: P_GAIN,
-                            i_gain: I_GAIN,
-                            d_gain: D_GAIN,
-                            p_prior: Vec3::ZERO,
-                            i_prior: Vec3::ZERO,
-                            pivot: Vec3::new(0.0, 1.0, 0.0),
-                            rotation_axis: Vec3::Z,
-                            target_angle: 0.0,
-                        },
-                    ));
+                    parent
+                        .spawn((
+                            PbrBundle {
+                                mesh: meshes.add(Cuboid::new(ARM_WIDTH, ARM_LENGTH, ARM_WIDTH)),
+                                material: materials.add(Color::srgb(0.8, 0.7, 0.6)),
+                                transform: Transform::from_xyz(ARM_WIDTH, ARM_LENGTH, 0.0),
+                                ..default()
+                            },
+                            RotationalJoint {
+                                p_gain: P_GAIN,
+                                i_gain: I_GAIN,
+                                d_gain: D_GAIN,
+                                p_prior: Vec3::ZERO,
+                                i_prior: Vec3::ZERO,
+                                pivot: Vec3::new(0.0, ARM_LENGTH / 2.0, 0.0),
+                                rotation_axis: Vec3::X,
+                                target_angle: 0.0,
+                            },
+                        ))
+                        .with_children(|parent| {
+                            parent.spawn((
+                                PbrBundle {
+                                    mesh: meshes.add(Sphere::new(0.1)),
+                                    material: materials.add(Color::srgb(0.8, 0.7, 0.6)),
+                                    transform: Transform::from_xyz(0.0, ARM_LENGTH / 2.0, 0.0),
+                                    ..default()
+                                },
+                                EndEffector,
+                            ));
+                        });
                 });
         });
 
@@ -180,11 +195,11 @@ fn setup(
     });
 
     // plane
-    /*commands.spawn(PbrBundle {
+    commands.spawn(PbrBundle {
         mesh: meshes.add(Plane3d::default().mesh().size(5.0, 5.0)),
         material: materials.add(Color::srgb(0.3, 0.5, 0.3)),
         ..default()
-    });*/
+    });
 
     // light
     commands.spawn(PointLightBundle {
@@ -209,7 +224,10 @@ fn process_input(
         for (mut arm) in &mut query {
             arm.target_angle = (arm.target_angle - 1.0).clamp(0.0, 360.0);
         }
-    } else {
+    } else if keyboard_input.pressed(KeyCode::KeyR) {
+        for (mut arm) in &mut query {
+            arm.target_angle = 0.0;
+        }
     }
 }
 
@@ -235,18 +253,10 @@ fn pid_controller(mut query: Query<(&mut Transform, &mut RotationalJoint)>, time
         if !d.is_nan() {
             out += (d * joint.d_gain)
         }
-
-        println!("\np: {p} \n i: {i} \n d: {d} \n out: {out}");
         let final_quat = get_joint_rotation(out, timer.delta_seconds());
         transform.rotate_around(joint.pivot, final_quat);
         joint.p_prior = p;
         joint.i_prior = i;
-        /*println!("current_rotation {0}", current_rotation);
-        println!("angle_rads {0}", angle_rads);
-        println!("target_rotation {0}", target_rotation);
-        println!("error_quat {0}", error_quat);
-        println!("final_quat {0}", final_quat);
-        println!("");*/
     }
 }
 
@@ -282,16 +292,26 @@ fn text_update_system(
 fn text_debug_update_system(
     mut text_query: Query<&mut Text, With<DebugText>>,
     joints: Query<(&RotationalJoint)>,
+    joint_end: Query<(&GlobalTransform, &EndEffector)>,
 ) {
     let mut joint_angles: Vec<f32> = Vec::new();
     for joint in &joints {
         joint_angles.push(joint.target_angle);
     }
+
     for mut debug_text in &mut text_query {
-        let mut text = String::from("Joints ");
+        let mut text = String::from("joints: ");
         for (i, joint_angle) in joint_angles.iter().enumerate() {
             text.push_str(format!("[{i}]: {joint_angle} ").as_str());
         }
+        for (transform, end_effector) in &joint_end {
+            let end_vector = transform
+                .translation()
+                .to_array()
+                .map(|x| (x * 100.0).round() / 100.0);
+            text.push_str(format!("\nend_effector: {0:?}", end_vector).as_str());
+        }
         debug_text.sections[0].value = text;
     }
+    // TODO how to get single object, when you know there is only ever one in the scene???
 }
