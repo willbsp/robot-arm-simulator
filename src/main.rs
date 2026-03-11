@@ -25,6 +25,15 @@ struct DebugText;
 #[derive(Component)]
 struct EndEffector;
 
+#[derive(Component)]
+struct YRotator;
+
+#[derive(Component)]
+struct XRotator;
+
+#[derive(Component)]
+struct ZRotator;
+
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, FrameTimeDiagnosticsPlugin))
@@ -127,6 +136,7 @@ fn setup(
                 rotation_axis: Vec3::Y,
                 target_angle: 0.0,
             },
+            YRotator,
         ))
         .with_children(|parent| {
             parent
@@ -147,6 +157,7 @@ fn setup(
                         rotation_axis: Vec3::X,
                         target_angle: 0.0,
                     },
+                    XRotator,
                 ))
                 .with_children(|parent| {
                     parent
@@ -167,6 +178,7 @@ fn setup(
                                 rotation_axis: Vec3::X,
                                 target_angle: 0.0,
                             },
+                            ZRotator,
                         ))
                         .with_children(|parent| {
                             parent.spawn((
@@ -181,6 +193,26 @@ fn setup(
                         });
                 });
         });
+
+    // test points for testing IK
+    commands.spawn(PbrBundle {
+        mesh: meshes.add(Sphere::new(0.1)),
+        material: materials.add(Color::srgb(0.8, 0.7, 0.6)),
+        transform: Transform::from_xyz(-1.0, 2.0, 1.0),
+        ..default()
+    });
+    commands.spawn(PbrBundle {
+        mesh: meshes.add(Sphere::new(0.1)),
+        material: materials.add(Color::srgb(0.8, 0.7, 0.6)),
+        transform: Transform::from_xyz(2.0, 2.0, 2.0),
+        ..default()
+    });
+    commands.spawn(PbrBundle {
+        mesh: meshes.add(Sphere::new(0.1)),
+        material: materials.add(Color::srgb(0.8, 0.7, 0.6)),
+        transform: Transform::from_xyz(1.0, 2.0, -1.0),
+        ..default()
+    });
 
     // camera
     commands.spawn(Camera3dBundle {
@@ -212,9 +244,16 @@ fn setup(
     });
 }
 
+// TODO return vec3 when can calculate all angles
+fn calculate_joint_angles(end_effector_position: Vec3) -> Vec3 {
+    let y_angle = (end_effector_position.x / end_effector_position.z).atan();
+    let x_angle = PI / 2.0 - (end_effector_position.y / end_effector_position.x).atan();
+    return Vec3::new(x_angle, y_angle, x_angle);
+}
+
 fn process_input(
     mut keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(&mut RotationalJoint)>,
+    mut query: Query<(&mut RotationalJoint)>
 ) {
     if keyboard_input.pressed(KeyCode::ArrowUp) {
         for (mut arm) in &mut query {
@@ -228,7 +267,26 @@ fn process_input(
         for (mut arm) in &mut query {
             arm.target_angle = 0.0;
         }
+    } else if keyboard_input.pressed(KeyCode::Digit1) {
+        for (mut arm) in &mut query {
+            let angles = calculate_joint_angles(Vec3::new(2.0, 2.0, 2.0));
+            let angle = (angles * arm.rotation_axis).element_sum();
+            arm.target_angle = rads_to_degrees(angle);
+        }
+    } else if keyboard_input.pressed(KeyCode::Digit2) {
+        for (mut arm) in &mut query {
+            let angles = calculate_joint_angles(Vec3::new(-1.0, 2.0, 1.0));
+            let angle = (angles * arm.rotation_axis).element_sum();
+            arm.target_angle = rads_to_degrees(angle);
+        }
+    } else if keyboard_input.pressed(KeyCode::Digit3) {
+        for (mut arm) in &mut query {
+            let angles = calculate_joint_angles(Vec3::new(1.0, 2.0, -1.0));
+            let angle = (angles * arm.rotation_axis).element_sum();
+            arm.target_angle = rads_to_degrees(angle);
+        }
     }
+
 }
 
 fn process_rotations(mut cubes: Query<(&mut Transform, &RotationalJoint)>, timer: Res<Time>) {
@@ -262,6 +320,10 @@ fn pid_controller(mut query: Query<(&mut Transform, &mut RotationalJoint)>, time
 
 fn degrees_to_rads(angle: f32) -> f32 {
     (angle * (PI / 180.0))
+}
+
+fn rads_to_degrees(angle: f32) -> f32 {
+    ((180.0 / PI) * angle)
 }
 
 fn calculate_error_quaternion(q1: Quat, q2: Quat) -> Quat {
